@@ -64,6 +64,7 @@ const DESTRUCTIVE_TOOL_NAMES = new Set<string>([
     'prune_members',
     'timeout_user',
     'reset_channel_permissions',
+    'copy_permissions',
     'archive_thread',
 ]);
 

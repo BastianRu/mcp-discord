@@ -8,6 +8,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { allTools, type ToolDefinition } from './tools/registry.js';
+import { confirmSchema, policyFromEnv, selectTools, type ToolPolicy } from './tools/policy.js';
 import type { DiscordProvider } from './providers/discord-provider.js';
 import { z } from 'zod';
 
@@ -23,6 +24,8 @@ export interface CreateServerOptions {
      * bot-owned state, etc.) through the same MCP surface.
      */
     extraTools?: ToolDefinition[];
+    /** Which tools to expose. Defaults to MCP_DISCORD_ALLOW / MCP_DISCORD_DENY. */
+    policy?: ToolPolicy;
 }
 
 /**
@@ -52,22 +55,29 @@ function extractZodShape(schema: z.ZodType<any>): Record<string, any> {
 }
 
 export function createMcpServer(options: CreateServerOptions): McpServer {
-    const { provider, name = 'discord-mcp-server', version = '0.1.0', extraTools = [] } = options;
+    const { provider, name = 'discord-mcp-server', version = '0.1.0', extraTools = [], policy = policyFromEnv() } = options;
 
     const server = new McpServer({
         name,
         version,
     });
 
-    const combinedTools: ToolDefinition[] = [...allTools, ...extraTools];
+    const combinedTools: ToolDefinition[] = selectTools([...allTools, ...extraTools], policy);
 
-    // Register every tool from the registry plus any host-provided extensions
+    // Register every tool the policy exposes, from the registry and host-provided extensions
     for (const tool of combinedTools) {
+        const gated = tool.requiresConfirmation === true;
+        const shape = extractZodShape(tool.schema);
+
         server.tool(
             tool.name,
             tool.description,
-            extractZodShape(tool.schema),
-            async (input: any) => {
+            gated ? { ...shape, confirm: confirmSchema(tool.name) } : shape,
+            { destructiveHint: tool.isDestructive === true },
+            async (rawInput: any) => {
+                const { confirm: _confirm, ...strippedInput } = rawInput;
+                const input = gated ? strippedInput : rawInput;
+
                 try {
                     if (!provider.isReady()) {
                         return {
